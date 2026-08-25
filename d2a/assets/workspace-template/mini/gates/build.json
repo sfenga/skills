@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "provider": {"matched": null, "rationale": ""},
+  "timebox": {"minutes": 20, "within_budget": null, "fallback": ""},
+  "intent": {"anchor_type": "", "anchor": "", "evidence": ""}
+}

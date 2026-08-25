@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "instructions": "每项包含 source_stage、claim、symbol、proves、confidence 和 evidence；必须覆盖 S1 至 S6。",
+  "claims": []
+}

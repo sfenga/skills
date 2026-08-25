@@ -1,0 +1,6 @@
+interface:
+  display_name: "D2A 架构实验室"
+  short_description: "拆解代码架构，构建可验证 mini，并生成本地报告"
+  default_prompt: "使用 $d2a 初始化或继续当前项目的架构实验工作流。"
+policy:
+  allow_implicit_invocation: false

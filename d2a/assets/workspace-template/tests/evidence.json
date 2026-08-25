@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "success_case": {
+    "purpose": "",
+    "input_or_precondition": "",
+    "command": "",
+    "expected_behavior": "",
+    "exit_code": null,
+    "output": "",
+    "observable_success_signal": "",
+    "architecture_intent_proven": ""
+  },
+  "failure_case": {
+    "purpose": "",
+    "fault_injection": "",
+    "command": "",
+    "expected_failure_behavior": "",
+    "exit_code": null,
+    "output": "",
+    "observable_failure_signal": "",
+    "architecture_intent_proven": "",
+    "observed_expected_failure": false
+  }
+}
