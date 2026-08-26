@@ -70,6 +70,27 @@ ARCH_QUESTION_STAGES = {
 }
 MINI_STAGES = {"mini-scope", "mini-design", "mini-build", "mini-test"}
 QUESTION_STAGES = ARCH_QUESTION_STAGES | MINI_STAGES
+QUESTION_TYPES = {"scenario", "counterfactual", "failure-analysis", "tradeoff"}
+OPTION_KINDS = {
+    "runtime-behavior",
+    "state-transition",
+    "module-responsibility",
+    "constraint-tradeoff",
+    "boundary-decision",
+}
+QUESTION_COVERAGE = {
+    "architecture-01-boundary": ("boundary-consequence", "non-removable-capability", "entrypoint-routing", "scope-classification"),
+    "architecture-02-runtime-driver": ("driver-trigger", "core-loop-order", "engine-responsibility", "support-module-effect"),
+    "architecture-03-core-objects": ("object-identity", "object-relation", "state-authority", "non-core-type"),
+    "architecture-04-state-evolution": ("tracked-entity", "transition-sequence", "transition-trigger", "persistence-recovery"),
+    "architecture-05-module-cooperation": ("module-boundary", "responsibility-allocation", "cooperation-chain", "complexity-source"),
+    "architecture-06-constraints-tradeoffs": ("hard-constraint", "dominant-pressure", "forced-tradeoff", "preserve-vs-detail"),
+    "architecture-07-overview": ("system-definition", "non-removable-capability", "architecture-intent", "reading-priority"),
+    "mini-scope": ("provider-stack", "runnable-slice", "intent-anchor", "omitted-scope"),
+    "mini-design": ("provider-design", "minimal-interface", "runtime-flow", "state-model"),
+    "mini-build": ("provider-layout", "single-path-tradeoff", "intent-proof", "unimplemented-scope"),
+    "mini-test": ("provider-contract", "minimal-test-set", "observable-signals", "intent-validation"),
+}
 EVIDENCE_STAGE_FILES = {
     "architecture-01-boundary": "architecture/evidence/01_boundary.json",
     "architecture-02-runtime-driver": "architecture/evidence/02_runtime_driver.json",
@@ -517,6 +538,8 @@ def distractor_errors(
         option = str(basis.get("option", ""))
         concept = str(basis.get("concept", "")).strip()
         evidence = str(basis.get("evidence", "")).strip()
+        plausible_reason = str(basis.get("plausible_reason", "")).strip()
+        wrong_reason = str(basis.get("wrong_reason", "")).strip()
         if option not in {"A", "B", "C", "D"} or option == correct_option or option in seen:
             errors.append(f"{context} 第 {index} 个干扰项选项无效或重复")
         else:
@@ -527,8 +550,67 @@ def distractor_errors(
         path_error = project_file_error(root, file_part)
         if not separator or not symbol.strip() or path_error:
             errors.append(f"{context} 第 {index} 个干扰项缺少有效的 文件::符号 证据")
+        if len(plausible_reason) < 12:
+            errors.append(f"{context} 第 {index} 个干扰项必须说明它为何对只理解部分业务的人看似合理")
+        if len(wrong_reason) < 12:
+            errors.append(f"{context} 第 {index} 个干扰项必须说明它为何在当前场景下错误")
     if len(seen) < 2:
         errors.append(f"{context} 必须覆盖至少两个不同的错误选项")
+    return errors
+
+
+def question_quality_errors(
+    root: Path,
+    stage: str,
+    record: dict,
+    context: str,
+    previous_coverages: set[str] | None = None,
+) -> list[str]:
+    errors: list[str] = []
+    question_type = str(record.get("question_type", ""))
+    coverage = str(record.get("coverage", ""))
+    option_kind = str(record.get("option_kind", ""))
+    scenario = str(record.get("scenario", "")).strip()
+    correct_reasoning = str(record.get("correct_reasoning", "")).strip()
+    blind_check = str(record.get("blind_elimination_check", "")).strip()
+    leak_check = str(record.get("answer_leak_check", "")).strip()
+    options = record.get("options") if isinstance(record.get("options"), dict) else {}
+
+    if question_type not in QUESTION_TYPES:
+        errors.append(f"{context} 必须是场景、反事实、故障分析或取舍推理题，不能是直接回忆题")
+    allowed_coverages = set(QUESTION_COVERAGE.get(stage, ()))
+    if coverage not in allowed_coverages:
+        errors.append(f"{context} 缺少当前阶段规定的业务理解覆盖点")
+    if previous_coverages is not None and coverage in previous_coverages:
+        errors.append(f"{context} 与前题重复覆盖同一认知点")
+    if option_kind not in OPTION_KINDS:
+        errors.append(f"{context} 缺少统一的选项语义类型")
+    if len(scenario) < 20:
+        errors.append(f"{context} 必须提供至少 20 字的具体业务或运行场景")
+    if len(correct_reasoning) < 20:
+        errors.append(f"{context} 必须说明结合代码与业务约束得到正确项的推理链")
+    if len(blind_check) < 20:
+        errors.append(f"{context} 必须记录盲猜排除检查，说明不了解项目者为何不能直接排除两项")
+    if len(leak_check) < 12:
+        errors.append(f"{context} 必须记录答案泄漏检查")
+
+    anchors = record.get("reasoning_anchors")
+    if not isinstance(anchors, list) or len(set(str(item) for item in anchors)) < 2:
+        errors.append(f"{context} 的推理必须结合至少两处不同的 文件::符号 代码锚点")
+    else:
+        for anchor in anchors:
+            file_part, separator, symbol = str(anchor).partition("::")
+            if not separator or not symbol.strip() or project_file_error(root, file_part):
+                errors.append(f"{context} 的推理锚点必须是有效的 文件::符号")
+
+    option_values = [str(value).strip() for value in options.values()]
+    if len(option_values) == 4 and all(option_values):
+        lengths = [len(value) for value in option_values]
+        if min(lengths) < 8 or max(lengths) > min(lengths) * 2.2:
+            errors.append(f"{context} 四个选项必须信息量接近，不能靠长度或过短措辞猜答案")
+        leak_phrases = ("正确答案", "真实主入口", "显然", "明显", "完全错误", "唯一正确", "没有任何")
+        if any(phrase in value for value in option_values for phrase in leak_phrases):
+            errors.append(f"{context} 的选项包含答案暗示或绝对化措辞")
     return errors
 
 
@@ -554,6 +636,8 @@ def qa_errors(root: Path, stage: str) -> list[str]:
         return errors + [f"{stage_label(stage)} 的确认题记录不是有效 JSONL"]
     if len(records) != 4:
         errors.append(f"{stage_label(stage)} 必须恰好记录四道确认题")
+    coverages: set[str] = set()
+    question_types: set[str] = set()
     for index, record in enumerate(records[:4], start=1):
         context = f"{stage_label(stage)} 第 {index} 题"
         if not isinstance(record, dict) or record.get("question_index") != index:
@@ -568,10 +652,17 @@ def qa_errors(root: Path, stage: str) -> list[str]:
         if correct not in {"A", "B", "C", "D"} or answer not in {"A", "B", "C", "D"}:
             errors.append(f"{context} 的正确项或用户答案无效")
         errors.extend(distractor_errors(root, record.get("distractor_bases"), options, correct, context))
+        errors.extend(question_quality_errors(root, stage, record, context, coverages))
+        coverages.add(str(record.get("coverage", "")))
+        question_types.add(str(record.get("question_type", "")))
         if index == 4:
             score = str(record.get("understanding_score", ""))
             if not score or len(score) > 80:
                 errors.append(f"{context} 缺少 80 字以内的理解度评分")
+    if len(records) == 4 and coverages != set(QUESTION_COVERAGE.get(stage, ())):
+        errors.append(f"{stage_label(stage)} 的四题必须完整覆盖四个不同业务认知点")
+    if len(records) == 4 and len(question_types & QUESTION_TYPES) < 3:
+        errors.append(f"{stage_label(stage)} 的四题必须至少使用三种推理题型")
     return errors
 
 
@@ -684,10 +775,18 @@ def cmd_record_qa(args: argparse.Namespace) -> int:
         raise RuntimeError("确认题必须包含非空题干和 A/B/C/D 四个选项")
     bases = []
     for raw in args.distractor_basis:
-        parts = raw.split("|", 2)
-        if len(parts) != 3:
-            raise RuntimeError("干扰项依据格式必须是 选项|项目概念|文件::符号")
-        bases.append({"option": parts[0].strip().upper(), "concept": parts[1].strip(), "evidence": parts[2].strip()})
+        parts = raw.split("|", 4)
+        if len(parts) != 5:
+            raise RuntimeError("干扰项依据格式必须是 选项|项目概念|文件::符号|为何看似合理|为何在当前场景错误")
+        bases.append(
+            {
+                "option": parts[0].strip().upper(),
+                "concept": parts[1].strip(),
+                "evidence": parts[2].strip(),
+                "plausible_reason": parts[3].strip(),
+                "wrong_reason": parts[4].strip(),
+            }
+        )
     basis_errors = distractor_errors(root, bases, options, args.correct_option, f"第 {next_index} 题")
     if basis_errors:
         raise RuntimeError("确认题干扰项门禁未通过：\n- " + "\n- ".join(basis_errors))
@@ -700,17 +799,33 @@ def cmd_record_qa(args: argparse.Namespace) -> int:
         "stage": stage,
         "question_index": next_index,
         "question_total": 4,
+        "question_type": str(getattr(args, "question_type", "")),
+        "coverage": str(getattr(args, "coverage", "")),
+        "option_kind": str(getattr(args, "option_kind", "")),
+        "scenario": str(getattr(args, "scenario", "")),
         "question": args.question,
         "options": options,
         "correct_option": args.correct_option,
+        "correct_reasoning": str(getattr(args, "correct_reasoning", "")),
+        "reasoning_anchors": list(getattr(args, "reasoning_anchor", []) or []),
         "distractor_bases": bases,
+        "blind_elimination_check": str(getattr(args, "blind_elimination_check", "")),
+        "answer_leak_check": str(getattr(args, "answer_leak_check", "")),
         "answer": args.answer,
         "evaluation": args.evaluation,
         "explanation": args.explanation,
     }
+    qa_path = d2a_dir / "qa" / f"{stage}.jsonl"
+    previous_coverages: set[str] = set()
+    if qa_path.is_file():
+        for line in qa_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                previous_coverages.add(str(json.loads(line).get("coverage", "")))
+    quality_errors = question_quality_errors(root, stage, record, f"第 {next_index} 题", previous_coverages)
+    if quality_errors:
+        raise RuntimeError("确认题难度门禁未通过：\n- " + "\n- ".join(quality_errors))
     if args.score:
         record["understanding_score"] = args.score
-    qa_path = d2a_dir / "qa" / f"{stage}.jsonl"
     qa_path.parent.mkdir(parents=True, exist_ok=True)
     with qa_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -1082,13 +1197,21 @@ def build_parser() -> argparse.ArgumentParser:
     start_questions.add_argument("--summary", required=True)
     record_qa = subparsers.add_parser("record-qa")
     record_qa.add_argument("--root")
+    record_qa.add_argument("--question-type", required=True, choices=sorted(QUESTION_TYPES), help="推理题型：场景、反事实、故障分析或取舍")
+    record_qa.add_argument("--coverage", required=True, help="当前阶段四个规定认知覆盖点之一；四题不得重复")
+    record_qa.add_argument("--option-kind", required=True, choices=sorted(OPTION_KINDS), help="四个选项共同的语义类型")
+    record_qa.add_argument("--scenario", required=True, help="至少 20 字的具体业务或运行场景")
     record_qa.add_argument("--question", required=True)
     record_qa.add_argument("--option-a", required=True)
     record_qa.add_argument("--option-b", required=True)
     record_qa.add_argument("--option-c", required=True)
     record_qa.add_argument("--option-d", required=True)
     record_qa.add_argument("--correct-option", required=True, choices=("A", "B", "C", "D"))
-    record_qa.add_argument("--distractor-basis", action="append", required=True, help="格式：选项|项目概念|文件::符号；至少提供两个")
+    record_qa.add_argument("--correct-reasoning", required=True, help="结合业务约束和代码锚点的正确项推理链")
+    record_qa.add_argument("--reasoning-anchor", action="append", required=True, help="格式：文件::符号；至少提供两处不同锚点")
+    record_qa.add_argument("--distractor-basis", action="append", required=True, help="格式：选项|项目概念|文件::符号|为何看似合理|为何在当前场景错误；至少提供两个")
+    record_qa.add_argument("--blind-elimination-check", required=True, help="说明不了解项目的人为何不能直接排除两个选项")
+    record_qa.add_argument("--answer-leak-check", required=True, help="说明选项如何避免长度、语气和绝对词泄漏答案")
     record_qa.add_argument("--answer", required=True, choices=("A", "B", "C", "D"))
     record_qa.add_argument("--evaluation", required=True, choices=("correct", "partial", "incorrect"))
     record_qa.add_argument("--explanation", required=True)

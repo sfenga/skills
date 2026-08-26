@@ -39,30 +39,101 @@ class WorkspaceTests(unittest.TestCase):
     def claim(stage: str, file: str = "main.py") -> dict:
         return {"source_stage": stage, "claim": f"{stage} 的结论", "symbol": "main", "proves": "证明测试项目的主入口", "confidence": "high", "evidence": [{"file": file}]}
 
+    @staticmethod
+    def valid_qa_record(stage: str, index: int) -> dict:
+        question_types = ("scenario", "counterfactual", "failure-analysis", "tradeoff")
+        return {
+            "stage": stage,
+            "question_index": index,
+            "question_total": 4,
+            "question_type": question_types[index - 1],
+            "coverage": D2A.QUESTION_COVERAGE[stage][index - 1],
+            "option_kind": "runtime-behavior",
+            "scenario": "一个请求在进程重启后继续执行，需要恢复既有状态并重新进入主流程。",
+            "question": "在该场景下，哪条调用顺序符合当前实现且没有把恢复职责放错模块？",
+            "options": {
+                "A": "请求先由 main 建立运行上下文，再调用 load_state 恢复状态",
+                "B": "请求先由 load_state 建立运行上下文，再调用 main 恢复状态",
+                "C": "请求由 main 跳过状态恢复，直接把运行上下文标记为完成",
+                "D": "请求由 load_state 持久化新上下文，再由 main 只读取最终结果",
+            },
+            "correct_option": "A",
+            "correct_reasoning": "main 负责组织主流程，load_state 负责恢复既有状态，两处职责共同决定调用顺序。",
+            "reasoning_anchors": ["main.py::main", "main.py::load_state"],
+            "distractor_bases": [
+                {
+                    "option": "B",
+                    "concept": "load_state",
+                    "evidence": "main.py::load_state",
+                    "plausible_reason": "load_state 确实参与恢复且位于启动主路径附近",
+                    "wrong_reason": "它把运行上下文建立和主流程编排错误交给恢复函数",
+                },
+                {
+                    "option": "C",
+                    "concept": "main",
+                    "evidence": "main.py::main",
+                    "plausible_reason": "main 确实负责入口，直接完成看起来可以缩短路径",
+                    "wrong_reason": "它跳过状态恢复，无法满足重启后继续执行的场景约束",
+                },
+            ],
+            "blind_elimination_check": "四项都使用真实函数并描述可运行顺序，必须结合入口和恢复职责才能排除。",
+            "answer_leak_check": "四项长度接近且语气一致，正确项没有绝对词或文档原句。",
+            "answer": "A",
+            "evaluation": "correct",
+            "explanation": "结合入口编排与状态恢复职责判断。",
+        }
+
+    def valid_qa_args(self, root: Path, stage: str, index: int, score: str | None = None) -> argparse.Namespace:
+        record = self.valid_qa_record(stage, index)
+        return argparse.Namespace(
+            root=str(root),
+            question_type=record["question_type"],
+            coverage=record["coverage"],
+            option_kind=record["option_kind"],
+            scenario=record["scenario"],
+            question=record["question"],
+            option_a=record["options"]["A"],
+            option_b=record["options"]["B"],
+            option_c=record["options"]["C"],
+            option_d=record["options"]["D"],
+            correct_option=record["correct_option"],
+            correct_reasoning=record["correct_reasoning"],
+            reasoning_anchor=record["reasoning_anchors"],
+            distractor_basis=[
+                "|".join((basis["option"], basis["concept"], basis["evidence"], basis["plausible_reason"], basis["wrong_reason"]))
+                for basis in record["distractor_bases"]
+            ],
+            blind_elimination_check=record["blind_elimination_check"],
+            answer_leak_check=record["answer_leak_check"],
+            answer=record["answer"],
+            evaluation=record["evaluation"],
+            explanation=record["explanation"],
+            score=score,
+        )
+
     def complete_boundary_questions(self, root: Path) -> None:
-        (root / "main.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+        (root / "main.py").write_text("def load_state():\n    return 'ready'\n\ndef main():\n    return load_state()\n", encoding="utf-8")
         D2A.cmd_align(argparse.Namespace(root=str(root), question=["系统边界是什么？"], summary="问题已对齐"))
         (root / ".d2a/architecture/01_boundary.md").write_text("# 系统边界\n\n证据：main.py::main\n", encoding="utf-8")
         self.write_json(root / ".d2a/architecture/evidence/01_boundary.json", {"schema_version": 1, "stage": "architecture-01-boundary", "claims": [self.claim("architecture-01-boundary")]})
         D2A.cmd_start_questions(argparse.Namespace(root=str(root), summary="分析完成"))
         for index in range(1, 5):
-            D2A.cmd_record_qa(argparse.Namespace(root=str(root), question=f"第 {index} 题：哪个描述符合主入口？", option_a="main 是真实主入口", option_b="main 只负责界面渲染", option_c="return 是独立持久化服务", option_d="系统没有运行入口", correct_option="A", distractor_basis=["B|main|main.py::main", "C|return|main.py::main"], answer="A", evaluation="correct", explanation="理解正确", score="理解度良好" if index == 4 else None))
+            D2A.cmd_record_qa(self.valid_qa_args(root, "architecture-01-boundary", index, "理解度良好" if index == 4 else None))
 
     def prepare_strict_report_fixture(self, root: Path) -> None:
-        (root / "main.py").write_text("def main():\n    return 0\n", encoding="utf-8")
+        (root / "main.py").write_text("def load_state():\n    return 'ready'\n\ndef main():\n    return load_state()\n", encoding="utf-8")
         (root / ".d2a/mini/source/main.py").write_text("print('mini ok')\n", encoding="utf-8")
         for path in (root / ".d2a").rglob("*.md"):
             value = path.read_text(encoding="utf-8").replace(D2A.PENDING_MARKER, "")
             path.write_text(value + "\n证据：main.py::main\n", encoding="utf-8")
         for stage, relative in D2A.EVIDENCE_STAGE_FILES.items():
             self.write_json(root / ".d2a" / relative, {"schema_version": 1, "stage": stage, "claims": [self.claim(stage)]})
-        qa_record = {"question_total": 4, "question": "哪个描述符合主入口？", "options": {"A": "main 是真实主入口", "B": "main 只负责界面渲染", "C": "return 是独立持久化服务", "D": "系统没有运行入口"}, "correct_option": "A", "distractor_bases": [{"option": "B", "concept": "main", "evidence": "main.py::main"}, {"option": "C", "concept": "return", "evidence": "main.py::main"}], "answer": "A", "evaluation": "correct", "explanation": "理解正确"}
         for stage in D2A.QUESTION_STAGES:
             if stage in D2A.ARCH_QUESTION_STAGES:
                 self.write_json(root / f".d2a/qa/{stage}.json", {"schema_version": 1, "stage": stage, "questions": ["本阶段原子问题"]})
             records = []
             for index in range(1, 5):
-                record = {**qa_record, "stage": stage, "question_index": index}
+                record = self.valid_qa_record(stage, index)
                 if index == 4:
                     record["understanding_score"] = "理解度良好"
                 records.append(json.dumps(record, ensure_ascii=False))
@@ -136,6 +207,41 @@ class WorkspaceTests(unittest.TestCase):
         self.write_json(state_path, state)
         args = argparse.Namespace(root=str(root), question="占位题", option_a="正确", option_b="错误", option_c="错误", option_d="错误", correct_option="A", distractor_basis=[], answer="A", evaluation="correct", explanation="说明", score=None)
         with self.assertRaisesRegex(RuntimeError, "至少需要两个"):
+            D2A.cmd_record_qa(args)
+
+    def test_obvious_recall_question_is_rejected(self) -> None:
+        root = self.init_project()
+        (root / "main.py").write_text("def load_state():\n    return 'ready'\n\ndef main():\n    return load_state()\n", encoding="utf-8")
+        state_path = root / ".d2a/state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update({"current_phase": "confirmation-questions", "question_index": 0, "question_total": 4})
+        self.write_json(state_path, state)
+        args = argparse.Namespace(
+            root=str(root),
+            question_type="scenario",
+            coverage="boundary-consequence",
+            option_kind="runtime-behavior",
+            scenario="一个新请求到达服务，团队需要判断它将从哪里进入并开始处理。",
+            question="哪个描述符合主入口？",
+            option_a="main 是真实主入口",
+            option_b="main 只负责界面渲染",
+            option_c="return 是独立持久化服务",
+            option_d="系统没有运行入口",
+            correct_option="A",
+            correct_reasoning="main 定义了主流程并调用 load_state，因此它承担请求进入后的编排职责。",
+            reasoning_anchor=["main.py::main", "main.py::load_state"],
+            distractor_basis=[
+                "B|main|main.py::main|main 确实是入口附近的真实概念|它与界面渲染职责没有对应代码关系",
+                "C|return|main.py::main|return 确实出现在入口函数的实现中|它只是语言控制流而不是持久化服务",
+            ],
+            blind_elimination_check="四个选项都来自当前项目概念，需要阅读实现以后才能判断职责。",
+            answer_leak_check="四个选项没有通过措辞或长度泄漏正确答案。",
+            answer="A",
+            evaluation="correct",
+            explanation="理解正确",
+            score=None,
+        )
+        with self.assertRaisesRegex(RuntimeError, "难度"):
             D2A.cmd_record_qa(args)
 
     def test_strong_challenge_requires_recorded_review(self) -> None:
