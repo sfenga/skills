@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "principle": "preserve-architecture-reduce-detail",
+  "component_mappings": [
+    {
+      "full_component": "",
+      "mini_component": "",
+      "full_responsibility": "",
+      "mini_responsibility": "",
+      "responsibility_preserved": null,
+      "full_evidence": "",
+      "mini_evidence": ""
+    }
+  ],
+  "dependency_direction": {
+    "preserved": null,
+    "rationale": "",
+    "full_evidence": "",
+    "mini_evidence": ""
+  },
+  "state_ownership": {
+    "preserved": null,
+    "rationale": "",
+    "full_evidence": "",
+    "mini_evidence": ""
+  },
+  "boundary_semantics": {
+    "preserved": null,
+    "rationale": "",
+    "full_evidence": "",
+    "mini_evidence": ""
+  },
+  "simplifications": [
+    {
+      "detail": "",
+      "reason": "",
+      "responsibility_unchanged": null
+    }
+  ],
+  "deviations": []
+}

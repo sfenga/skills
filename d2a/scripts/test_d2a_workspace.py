@@ -122,7 +122,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def prepare_strict_report_fixture(self, root: Path) -> None:
         (root / "main.py").write_text("def load_state():\n    return 'ready'\n\ndef main():\n    return load_state()\n", encoding="utf-8")
-        (root / ".d2a/mini/source/main.py").write_text("print('mini ok')\n", encoding="utf-8")
+        (root / ".d2a/mini/source/main.py").write_text("def main():\n    print('mini ok')\n\nmain()\n", encoding="utf-8")
         for path in (root / ".d2a").rglob("*.md"):
             value = path.read_text(encoding="utf-8").replace(D2A.PENDING_MARKER, "")
             path.write_text(value + "\n证据：main.py::main\n", encoding="utf-8")
@@ -144,6 +144,29 @@ class WorkspaceTests(unittest.TestCase):
         decisions = ("boundary", "driver", "core-objects", "state-evolution", "cooperation", "dominant-constraint")
         rounds = [{"decision": item, "objection": "质疑", "response": "回应", "strength": "weak", "reason": "代码证据充分", "evidence": ["main.py::main"], "resolved": True} for item in decisions]
         self.write_json(root / ".d2a/challenge/challenge.json", {"schema_version": 1, "rounds": rounds, "recommendation": "继续推进", "review_status": "not-required"})
+        self.write_json(
+            root / ".d2a/mini/architecture-alignment.json",
+            {
+                "schema_version": 1,
+                "principle": "preserve-architecture-reduce-detail",
+                "component_mappings": [
+                    {
+                        "full_component": "主流程编排器",
+                        "mini_component": "主流程编排器",
+                        "full_responsibility": "组织请求进入与状态恢复",
+                        "mini_responsibility": "组织请求进入与状态恢复",
+                        "responsibility_preserved": True,
+                        "full_evidence": "main.py::main",
+                        "mini_evidence": ".d2a/mini/source/main.py::main",
+                    }
+                ],
+                "dependency_direction": {"preserved": True, "rationale": "入口仍向内调用状态逻辑", "full_evidence": "main.py::main", "mini_evidence": ".d2a/mini/source/main.py::main"},
+                "state_ownership": {"preserved": True, "rationale": "状态仍由主流程持有", "full_evidence": "main.py::main", "mini_evidence": ".d2a/mini/source/main.py::main"},
+                "boundary_semantics": {"preserved": True, "rationale": "入口边界保持一致", "full_evidence": "main.py::main", "mini_evidence": ".d2a/mini/source/main.py::main"},
+                "simplifications": [{"detail": "省略外部集成", "reason": "不影响主流程职责", "responsibility_unchanged": True}],
+                "deviations": [],
+            },
+        )
         for stage, relative in D2A.GATE_STAGE_FILES.items():
             gate = {"schema_version": 1, "provider": {"matched": True, "rationale": "沿用项目技术栈"}, "timebox": {"minutes": 10, "within_budget": True, "fallback": "缩小到单一路径"}, "intent": {"anchor_type": "state", "anchor": "运行状态", "evidence": "main.py::main"}}
             if stage == "mini-scope":
@@ -192,6 +215,21 @@ class WorkspaceTests(unittest.TestCase):
         errors = D2A.build_evidence_errors(root)
         self.assertTrue(any("源码" in error for error in errors))
         self.assertTrue(any("真实命令" in error for error in errors))
+
+    def test_mini_gate_requires_full_to_mini_architecture_alignment(self) -> None:
+        root = self.init_project()
+        self.write_json(
+            root / ".d2a/mini/gates/scope.json",
+            {
+                "schema_version": 1,
+                "provider": {"matched": True, "rationale": "沿用项目技术栈"},
+                "timebox": {"minutes": 20, "within_budget": True, "fallback": "缩小功能范围"},
+                "intent": {"anchor_type": "cooperation", "anchor": "请求主链", "evidence": "main.py::main"},
+                "stack_confirmation": {"recommended": "Python", "final": "Python", "changed": False, "user_confirmed": True},
+            },
+        )
+        errors = D2A.gate_errors(root, "mini-scope")
+        self.assertTrue(any("架构一致性" in error or "职责映射" in error for error in errors))
 
     def test_handwritten_minimal_test_flags_do_not_pass(self) -> None:
         root = self.init_project()

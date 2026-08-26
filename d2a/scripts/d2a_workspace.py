@@ -118,10 +118,10 @@ ARTIFACTS = {
     ],
     "architecture-07-overview": ["architecture/07_overview.md"],
     "architecture-challenge": ["challenge/challenge.md"],
-    "mini-scope": ["mini/scope.md", GATE_STAGE_FILES["mini-scope"]],
-    "mini-design": ["mini/design.md", GATE_STAGE_FILES["mini-design"]],
-    "mini-build": ["mini/build-plan.md", "mini/source/README.md", "mini/build-evidence.json", GATE_STAGE_FILES["mini-build"]],
-    "mini-test": ["tests/test-plan.md", "tests/evidence.json", GATE_STAGE_FILES["mini-test"]],
+    "mini-scope": ["mini/scope.md", "mini/architecture-alignment.json", GATE_STAGE_FILES["mini-scope"]],
+    "mini-design": ["mini/design.md", "mini/architecture-alignment.json", GATE_STAGE_FILES["mini-design"]],
+    "mini-build": ["mini/build-plan.md", "mini/source/README.md", "mini/build-evidence.json", "mini/architecture-alignment.json", GATE_STAGE_FILES["mini-build"]],
+    "mini-test": ["tests/test-plan.md", "tests/evidence.json", "mini/architecture-alignment.json", GATE_STAGE_FILES["mini-test"]],
     "report": ["report/outline.md"],
 }
 
@@ -416,6 +416,101 @@ def gate_errors(root: Path, stage: str) -> list[str]:
             or stack.get("user_confirmed") is not True
         ):
             errors.append(f"{relative} 缺少用户确认后的最终技术栈")
+    errors.extend(architecture_alignment_errors(root, require_mini_evidence=stage in {"mini-build", "mini-test"}))
+    return errors
+
+
+def architecture_reference_error(root: Path, value: object, require_mini: bool = False) -> str | None:
+    raw = str(value).strip()
+    file_part, separator, symbol = raw.partition("::")
+    if not separator or not symbol.strip():
+        return "必须使用 文件::符号"
+    path_error = project_file_error(root, file_part)
+    if path_error:
+        return path_error
+    if require_mini and not file_part.startswith(".d2a/mini/source/"):
+        return "必须指向 .d2a/mini/source 中的真实源码"
+    return None
+
+
+def architecture_alignment_errors(root: Path, require_mini_evidence: bool = False) -> list[str]:
+    relative = "mini/architecture-alignment.json"
+    try:
+        data = load_json(workspace(root) / relative)
+    except RuntimeError:
+        return [f"{relative} 缺少 Mini 与完整版本的架构一致性证明"]
+    errors: list[str] = []
+    if data.get("principle") != "preserve-architecture-reduce-detail":
+        errors.append(f"{relative} 必须声明只缩减功能与实现细节、不重新分配架构职责")
+
+    mappings = data.get("component_mappings")
+    if not isinstance(mappings, list) or not mappings:
+        errors.append(f"{relative} 至少需要一项完整版本到 Mini 的组件职责映射")
+    else:
+        seen_full: set[str] = set()
+        seen_mini: set[str] = set()
+        for index, mapping in enumerate(mappings, start=1):
+            context = f"{relative} 第 {index} 项职责映射"
+            if not isinstance(mapping, dict):
+                errors.append(f"{context} 不是对象")
+                continue
+            full_component = str(mapping.get("full_component", "")).strip()
+            mini_component = str(mapping.get("mini_component", "")).strip()
+            if not full_component or not mini_component:
+                errors.append(f"{context} 缺少完整版本或 Mini 组件")
+            if full_component in seen_full or mini_component in seen_mini:
+                errors.append(f"{context} 出现职责合并或重复映射；Mini 不得借缩减重新分配职责")
+            seen_full.add(full_component)
+            seen_mini.add(mini_component)
+            if not str(mapping.get("full_responsibility", "")).strip() or not str(mapping.get("mini_responsibility", "")).strip():
+                errors.append(f"{context} 缺少两端职责说明")
+            if mapping.get("responsibility_preserved") is not True:
+                errors.append(f"{context} 未证明职责保持一致")
+            full_error = architecture_reference_error(root, mapping.get("full_evidence"))
+            if full_error:
+                errors.append(f"{context} 的完整版本证据无效：{full_error}")
+            if require_mini_evidence:
+                mini_error = architecture_reference_error(root, mapping.get("mini_evidence"), require_mini=True)
+                if mini_error:
+                    errors.append(f"{context} 的 Mini 证据无效：{mini_error}")
+
+    for field, label in (
+        ("dependency_direction", "调用与依赖方向"),
+        ("state_ownership", "状态所有权"),
+        ("boundary_semantics", "边界与错误语义"),
+    ):
+        item = data.get(field)
+        if not isinstance(item, dict) or item.get("preserved") is not True or not str(item.get("rationale", "")).strip():
+            errors.append(f"{relative} 未证明{label}与完整版本一致")
+            continue
+        full_error = architecture_reference_error(root, item.get("full_evidence"))
+        if full_error:
+            errors.append(f"{relative} 的{label}完整版本证据无效：{full_error}")
+        if require_mini_evidence:
+            mini_error = architecture_reference_error(root, item.get("mini_evidence"), require_mini=True)
+            if mini_error:
+                errors.append(f"{relative} 的{label} Mini 证据无效：{mini_error}")
+
+    simplifications = data.get("simplifications")
+    if not isinstance(simplifications, list) or not simplifications:
+        errors.append(f"{relative} 必须明确 Mini 缩减了哪些实现细节")
+    else:
+        for index, item in enumerate(simplifications, start=1):
+            if (
+                not isinstance(item, dict)
+                or not str(item.get("detail", "")).strip()
+                or not str(item.get("reason", "")).strip()
+                or item.get("responsibility_unchanged") is not True
+            ):
+                errors.append(f"{relative} 第 {index} 项缩减未证明不改变架构职责")
+
+    deviations = data.get("deviations")
+    if not isinstance(deviations, list):
+        errors.append(f"{relative} 的架构偏差必须是列表")
+    else:
+        for index, item in enumerate(deviations, start=1):
+            if not isinstance(item, dict) or not str(item.get("reason", "")).strip() or item.get("user_confirmed") is not True:
+                errors.append(f"{relative} 第 {index} 项架构偏差缺少理由或用户明确确认")
     return errors
 
 
@@ -1061,6 +1156,7 @@ def build_brief_html(root: Path) -> str:
     state_diagram = html.escape(read_artifact(d2a_dir, "architecture/04_state_evolution.md"))
     mini_items = [
         ("技术栈与 20% 切片", "mini/scope.md"),
+        ("完整版本与 Mini 架构一致性", "mini/architecture-alignment.json"),
         ("最小设计", "mini/design.md"),
         ("构建摘要", "mini/build-plan.md"),
         ("测试证据", "tests/test-plan.md"),
@@ -1095,6 +1191,7 @@ def build_report_html(root: Path) -> str:
         ("代码地图", "architecture/99_code_map.md"),
         ("架构质疑", "challenge/challenge.md"),
         ("Mini 范围", "mini/scope.md"),
+        ("完整版本与 Mini 架构一致性", "mini/architecture-alignment.json"),
         ("Mini 设计", "mini/design.md"),
         ("Mini 构建", "mini/build-plan.md"),
         ("测试计划", "tests/test-plan.md"),
